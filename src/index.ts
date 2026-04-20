@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { AppFlowyClient, configFromEnv } from "./client.js";
+import { decodeDocumentMarkdown } from "./yjsDoc.js";
 
 const client = new AppFlowyClient(configFromEnv());
 
@@ -54,6 +55,28 @@ server.tool(
   },
   async ({ workspace_id, view_id }) =>
     text(await client.request("GET", `/api/workspace/${workspace_id}/page-view/${view_id}`)),
+);
+
+server.tool(
+  "fetch_page_markdown",
+  "Fetch a page and render its Yjs document as markdown. Only works for `document` layouts.",
+  {
+    workspace_id: z.string(),
+    view_id: z.string(),
+  },
+  async ({ workspace_id, view_id }) => {
+    const res: any = await client.request(
+      "GET",
+      `/api/workspace/${workspace_id}/page-view/${view_id}`,
+    );
+    const encoded = res?.data?.data?.encoded_collab;
+    if (!Array.isArray(encoded)) {
+      throw new Error("Page has no encoded_collab payload (not a document page?).");
+    }
+    const md = decodeDocumentMarkdown(encoded as number[]);
+    const name = res?.data?.view?.name ?? "";
+    return text(name ? `# ${name}\n\n${md}` : md);
+  },
 );
 
 server.tool(

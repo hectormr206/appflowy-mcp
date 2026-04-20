@@ -10,6 +10,7 @@ Model Context Protocol server for AppFlowy Cloud. Lets Claude Code, OpenCode CLI
 | `list_workspaces` | Workspaces the user can access |
 | `search` | Full-text / semantic search in a workspace |
 | `fetch_page` | Get a page view by id (raw JSON incl. Yjs blob) |
+| `fetch_page_markdown` | Fetch a page and render its Yjs document as markdown |
 | `list_databases` | All databases in a workspace |
 | `get_database_rows` | Rows + cells of a database |
 | `get_database_fields` | Columns of a database (id, name, type) |
@@ -26,6 +27,10 @@ Model Context Protocol server for AppFlowy Cloud. Lets Claude Code, OpenCode CLI
 AppFlowy's document content is a CRDT managed via WebSocket (not REST). There is no "replace page body" endpoint — use `append_to_page` for adding content, and for in-place edits open AppFlowy directly.
 
 Comments are not exposed via the REST API either. Not supported.
+
+### Markdown rendering
+
+`fetch_page_markdown` decodes the page's Yjs CRDT document client-side (via the `yjs` package) and renders it to markdown. Supported: headings, paragraphs, bulleted / numbered / todo / toggle lists, quotes, callouts, code blocks, dividers, images, bold / italic / strike / code / links. Page mentions are rendered as `[[page:UUID]]` placeholders. Unknown block types fall back to their inline text.
 
 ### Database row limitations
 
