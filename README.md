@@ -12,6 +12,9 @@ Model Context Protocol server for AppFlowy Cloud. Lets Claude Code, OpenCode CLI
 | `fetch_page` | Get a page view by id (raw JSON incl. Yjs blob) |
 | `list_databases` | All databases in a workspace |
 | `get_database_rows` | Rows + cells of a database |
+| `get_database_fields` | Columns of a database (id, name, type) |
+| `insert_database_row` | Insert a row with `cells` keyed by field id |
+| `upsert_database_row` | Update (or insert) a row by `pre_hash` — see notes |
 | `create_page` | New page (document / grid / board / calendar) |
 | `rename_page` | Change a page's title |
 | `append_to_page` | Append markdown content to a page |
@@ -23,6 +26,12 @@ Model Context Protocol server for AppFlowy Cloud. Lets Claude Code, OpenCode CLI
 AppFlowy's document content is a CRDT managed via WebSocket (not REST). There is no "replace page body" endpoint — use `append_to_page` for adding content, and for in-place edits open AppFlowy directly.
 
 Comments are not exposed via the REST API either. Not supported.
+
+### Database row limitations
+
+- AppFlowy-Cloud exposes no `DELETE` endpoint for database rows — deletion must be done in the AppFlowy UI.
+- `upsert_database_row` takes a `pre_hash` string (not the raw row id). The server hashes `workspace_id + database_id + pre_hash` with SHA-256 to derive the actual row id. To update an existing row you must reuse the same `pre_hash` that created it — there is no server-side lookup from row id back to pre_hash.
+- `cells` is a map keyed by `field_id` (from `get_database_fields`). Simple field types (text / number / checkbox) accept plain JSON values; rich types (date, select, relation) may require AppFlowy's internal cell encoding which is not fully documented in the REST layer.
 
 ## Install
 

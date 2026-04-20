@@ -96,6 +96,61 @@ server.tool(
 );
 
 server.tool(
+  "get_database_fields",
+  "List database columns (id, name, type). Use the field `id`s as keys for `cells` in insert_database_row / upsert_database_row.",
+  {
+    workspace_id: z.string(),
+    database_id: z.string(),
+  },
+  async ({ workspace_id, database_id }) =>
+    text(
+      await client.request(
+        "GET",
+        `/api/workspace/${workspace_id}/database/${database_id}/fields`,
+      ),
+    ),
+);
+
+server.tool(
+  "insert_database_row",
+  "Insert a new row in a database. `cells` is a map keyed by field_id (from get_database_fields). Rich field types (date, select, relation) may need AppFlowy-specific cell encoding — see README limitations.",
+  {
+    workspace_id: z.string(),
+    database_id: z.string(),
+    cells: z.record(z.any()).optional().describe("Map field_id -> value. Defaults to empty."),
+    document: z.string().optional().describe("Optional row document (markdown-ish)."),
+  },
+  async ({ workspace_id, database_id, cells, document }) =>
+    text(
+      await client.request(
+        "POST",
+        `/api/workspace/${workspace_id}/database/${database_id}/row`,
+        { body: { cells: cells ?? {}, document } },
+      ),
+    ),
+);
+
+server.tool(
+  "upsert_database_row",
+  "Insert-or-update a row. The row id is derived as sha256(workspace_id + database_id + pre_hash). Reuse the same `pre_hash` to update an existing row (AppFlowy does NOT let you update by raw row id).",
+  {
+    workspace_id: z.string(),
+    database_id: z.string(),
+    pre_hash: z.string().describe("Stable key that determines the row id"),
+    cells: z.record(z.any()).optional(),
+    document: z.string().optional(),
+  },
+  async ({ workspace_id, database_id, pre_hash, cells, document }) =>
+    text(
+      await client.request(
+        "PUT",
+        `/api/workspace/${workspace_id}/database/${database_id}/row`,
+        { body: { pre_hash, cells: cells ?? {}, document } },
+      ),
+    ),
+);
+
+server.tool(
   "create_page",
   "Create a new page under a parent page. Layout: document | grid | board | calendar | chat. parent_view_id is REQUIRED — get it from list_workspaces (the space view ids) or from an existing page.",
   {
