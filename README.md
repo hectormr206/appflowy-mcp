@@ -2,19 +2,20 @@
 
 Model Context Protocol server for AppFlowy Cloud. Lets Claude Code, OpenCode CLI, and any other MCP client read and write pages in your self-hosted AppFlowy.
 
-## Tools (v0.1)
+## Tools (v0.2)
 
 | Tool | What it does |
 |------|--------------|
 | `get_self` | Authenticated user profile |
 | `list_workspaces` | Workspaces the user can access |
 | `search` | Full-text / semantic search in a workspace |
-| `fetch_page` | Get a page view by id |
+| `fetch_page` | Get a page view by id (raw JSON incl. Yjs blob) |
 | `list_databases` | All databases in a workspace |
 | `get_database_rows` | Rows + cells of a database |
 | `create_page` | New page (document / grid / board / calendar) |
 | `rename_page` | Change a page's title |
 | `append_to_page` | Append markdown content to a page |
+| `duplicate_page` | Duplicate a page and its subtree |
 | `move_page` | Move / reorder a page |
 
 ### What this MCP does NOT do

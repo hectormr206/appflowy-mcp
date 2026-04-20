@@ -8,7 +8,7 @@ const client = new AppFlowyClient(configFromEnv());
 
 const server = new McpServer({
   name: "appflowy-mcp",
-  version: "0.1.0",
+  version: "0.2.0",
 });
 
 const text = (value: unknown) => ({
@@ -168,6 +168,24 @@ server.tool(
       ),
     );
   },
+);
+
+server.tool(
+  "duplicate_page",
+  "Duplicate a page (and its subtree) in place. Optional `suffix` is appended to the copy's name (default `(copy)`).",
+  {
+    workspace_id: z.string(),
+    view_id: z.string().describe("Page UUID to duplicate"),
+    suffix: z.string().optional().describe("Name suffix for the duplicate"),
+  },
+  async ({ workspace_id, view_id, suffix }) =>
+    text(
+      await client.request(
+        "POST",
+        `/api/workspace/${workspace_id}/page-view/${view_id}/duplicate`,
+        { body: { suffix } },
+      ),
+    ),
 );
 
 server.tool(
