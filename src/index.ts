@@ -769,6 +769,40 @@ server.tool(
 );
 
 server.tool(
+  "list_templates",
+  "List public templates from the AppFlowy template center. GET /api/template-center/template. Optional filters: category_id, is_featured, is_new_template, name_contains. NOTE: templates are read-only via REST — there is no `create_from_template` endpoint, so this tool is list/get only.",
+  {
+    category_id: z.string().optional(),
+    is_featured: z.boolean().optional(),
+    is_new_template: z.boolean().optional(),
+    name_contains: z.string().optional(),
+  },
+  async (params) => {
+    const query: Record<string, string> = {};
+    if (params.category_id) query.category_id = params.category_id;
+    if (params.is_featured != null) query.is_featured = params.is_featured ? "true" : "false";
+    if (params.is_new_template != null) query.is_new_template = params.is_new_template ? "true" : "false";
+    if (params.name_contains) query.name_contains = params.name_contains;
+    return text(await client.request("GET", `/api/template-center/template`, { query }));
+  },
+);
+
+server.tool(
+  "get_template",
+  "Get a single template by its view_id (with publish info). GET /api/template-center/template/{view_id}.",
+  { view_id: z.string() },
+  async ({ view_id }) =>
+    text(await client.request("GET", `/api/template-center/template/${view_id}`)),
+);
+
+server.tool(
+  "list_template_categories",
+  "List template categories available in the template center. GET /api/template-center/category.",
+  {},
+  async () => text(await client.request("GET", `/api/template-center/category`)),
+);
+
+server.tool(
   "list_members",
   "List members of a workspace (uid, email, role, avatar).",
   { workspace_id: z.string() },
