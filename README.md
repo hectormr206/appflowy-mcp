@@ -2,7 +2,7 @@
 
 Model Context Protocol server for AppFlowy Cloud. Lets Claude Code, OpenCode CLI, and any other MCP client read and write pages in your self-hosted AppFlowy.
 
-## Tools (v0.3 — 29 tools)
+## Tools (v0.4 — 34 tools)
 
 ### Identity & navigation
 
@@ -32,6 +32,16 @@ Model Context Protocol server for AppFlowy Cloud. Lets Claude Code, OpenCode CLI
 | `update_page_icon` | Set a page icon (`ty`: 0=Emoji, 1=Url, 2=Icon) |
 | `remove_page_icon` | Remove a page's icon |
 
+### Document editing (v0.4, in-place Yjs edits)
+
+| Tool | What it does |
+|------|--------------|
+| `edit_page_block` | Replace the plain text of a block by `block_id` |
+| `delete_page_block` | Remove a block (and its subtree) by `block_id` |
+| `insert_page_block_before` | Insert a new block before a reference block |
+| `insert_page_block_after` | Insert a new block after a reference block |
+| `replace_page_content` | Wipe the page body and rewrite it from markdown |
+
 ### Databases
 
 | Tool | What it does |
@@ -58,11 +68,27 @@ Model Context Protocol server for AppFlowy Cloud. Lets Claude Code, OpenCode CLI
 | `ai_translate_row` | Translate a row's cells to a target language |
 | `list_ai_models` | List AI models available for this workspace |
 
-### What this MCP does NOT do
+### How in-place document editing works (v0.4)
 
-AppFlowy's document content is a CRDT managed via WebSocket (not REST). There is no "replace page body" endpoint — use `append_to_page` for adding content, and for in-place edits open AppFlowy directly.
+AppFlowy documents are Yjs CRDTs. v0.4 edits them by:
 
-Comments are not exposed via the REST API either. Not supported.
+1. Fetching the page's `encoded_collab` via REST,
+2. Loading it into an in-memory `Y.Doc`, capturing its state vector,
+3. Mutating the block tree (edit / delete / insert / replace) in a single transaction,
+4. Encoding the diff as a Yjs incremental update and POSTing it to `/api/workspace/v1/{ws}/collab/{object_id}/web-update` (AppFlowy-Cloud merges the update on the server the same way the WebSocket path does).
+
+This is race-safe per-request (each call reads fresh state) but does NOT subscribe to live collab updates — if another client is typing at the same exact moment, your write lands as a concurrent Yjs update and is merged by the CRDT; the visible outcome may differ from what you expected to replace.
+
+Block ids are visible in `fetch_page`'s raw `encoded_collab` payload; find them by decoding the Yjs doc yourself, or ship a small helper call if you need them routinely (not currently exposed as a tool).
+
+**Known limits of v0.4 editing:**
+
+- `edit_page_block` rewrites the block's `Y.Text` wholesale. Inline formatting (bold / italic / links / mentions) on the original text is **discarded** — the new text is plain.
+- `replace_page_content`'s markdown parser handles headings, paragraphs, bullet/numbered/todo lists, `>` quotes and `---` dividers only. It does NOT parse inline `**bold**`, `*italic*`, links, code spans, or code fences — those arrive as literal characters in the paragraph text. Tables, images, and nested children are not emitted.
+- `delete_page_block` on a block with children removes the whole subtree. Text nodes under `text_map` and children arrays under `children_map` are garbage-collected for the deleted root only (descendants' entries are orphaned — harmless but leaks a little Yjs state over time).
+- No support for inserting rich-formatted inline text (Delta ops with attributes) via these tools.
+
+Comments are not exposed via the REST API. Not supported.
 
 ### Markdown rendering
 

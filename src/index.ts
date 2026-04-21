@@ -4,12 +4,21 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { AppFlowyClient, configFromEnv } from "./client.js";
 import { decodeDocumentMarkdown } from "./yjsDoc.js";
+import {
+  loadPageDoc,
+  pushUpdate,
+  editBlockText,
+  deleteBlock,
+  insertBlock,
+  replacePageContent,
+  markdownToBlocks,
+} from "./docEdit.js";
 
 const client = new AppFlowyClient(configFromEnv());
 
 const server = new McpServer({
   name: "appflowy-mcp",
-  version: "0.2.0",
+  version: "0.4.0",
 });
 
 const text = (value: unknown) => ({
@@ -488,5 +497,98 @@ server.tool(
       ),
     ),
 );
+
+const blockInSchema = z.object({
+  type: z.string(),
+  data: z.record(z.any()).optional(),
+  text: z.string().optional(),
+});
+
+server.tool(
+  "edit_page_block",
+  "Replace the text of a specific block in a document page. Find block_id via fetch_page markdown or raw encoded_collab. Rewrites the block's Yjs Y.Text wholesale — does NOT preserve inline formatting.",
+  {
+    workspace_id: z.string(),
+    view_id: z.string(),
+    block_id: z.string().describe("Target block id"),
+    text: z.string().describe("New plain text (no rich formatting applied)"),
+  },
+  async ({ workspace_id, view_id, block_id, text: newText }) => {
+    const loaded = await loadPageDoc(client, workspace_id, view_id);
+    editBlockText(loaded, block_id, newText);
+    await pushUpdate(client, workspace_id, view_id, loaded);
+    return text({ ok: true, block_id });
+  },
+);
+
+/* PLACEHOLDER
+server.tool(
+  "delete_page_block",
+  "Remove a block (and its subtree) from a document page by block_id.",
+  {
+    workspace_id: z.string(),
+    view_id: z.string(),
+    block_id: z.string(),
+  },
+  async ({ workspace_id, view_id, block_id }) => {
+    const loaded = await loadPageDoc(client, workspace_id, view_id);
+    deleteBlock(loaded, block_id);
+    await pushUpdate(client, workspace_id, view_id, loaded);
+    return text({ ok: true, deleted: block_id });
+  },
+);
+
+server.tool(
+  "insert_page_block_before",
+  "Insert a new block immediately BEFORE an existing block (ref_block_id) in its parent. Block spec: {type, data?, text?}.",
+  {
+    workspace_id: z.string(),
+    view_id: z.string(),
+    ref_block_id: z.string(),
+    block: blockInSchema,
+  },
+  async ({ workspace_id, view_id, ref_block_id, block }) => {
+    const loaded = await loadPageDoc(client, workspace_id, view_id);
+    const newId = insertBlock(loaded, ref_block_id, block, "before");
+    await pushUpdate(client, workspace_id, view_id, loaded);
+    return text({ ok: true, inserted_block_id: newId });
+  },
+);
+
+server.tool(
+  "insert_page_block_after",
+  "Insert a new block immediately AFTER an existing block (ref_block_id) in its parent.",
+  {
+    workspace_id: z.string(),
+    view_id: z.string(),
+    ref_block_id: z.string(),
+    block: blockInSchema,
+  },
+  async ({ workspace_id, view_id, ref_block_id, block }) => {
+    const loaded = await loadPageDoc(client, workspace_id, view_id);
+    const newId = insertBlock(loaded, ref_block_id, block, "after");
+    await pushUpdate(client, workspace_id, view_id, loaded);
+    return text({ ok: true, inserted_block_id: newId });
+  },
+);
+
+server.tool(
+  "replace_page_content",
+  "WIPE the entire page body and replace it with markdown-derived blocks. Supports: headings (#..######), bullet/numbered lists, - [ ] todos, > quotes, --- dividers, paragraphs. Does NOT parse inline bold/italic/links.",
+  {
+    workspace_id: z.string(),
+    view_id: z.string(),
+    markdown: z.string(),
+  },
+  async ({ workspace_id, view_id, markdown }) => {
+    const loaded = await loadPageDoc(client, workspace_id, view_id);
+    const specs = markdownToBlocks(markdown);
+    replacePageContent(loaded, specs);
+    await pushUpdate(client, workspace_id, view_id, loaded);
+    return text({ ok: true, blocks_written: specs.length });
+  },
+);
+
+*/
 
 await server.connect(new StdioServerTransport());
