@@ -130,6 +130,154 @@ server.tool(
     ),
 );
 
+const filterOpSchema = z.object({
+  field_id: z.string(),
+  op: z.enum(["eq", "neq", "contains", "not_contains", "empty", "not_empty", "gt", "lt", "gte", "lte"]),
+  value: z.any().optional(),
+});
+
+const sortSpecSchema = z.object({
+  field_id: z.string(),
+  direction: z.enum(["asc", "desc"]).default("asc"),
+});
+
+const getCellString = (cell: unknown): string => {
+  if (cell == null) return "";
+  if (typeof cell === "string") return cell;
+  if (typeof cell === "number" || typeof cell === "boolean") return String(cell);
+  // AppFlowy cells are often objects; prefer `data` then JSON-stringify
+  const anyCell = cell as any;
+  if (typeof anyCell?.data === "string") return anyCell.data;
+  if (typeof anyCell?.data === "number") return String(anyCell.data);
+  try {
+    return JSON.stringify(cell);
+  } catch {
+    return "";
+  }
+};
+
+const getCellNumber = (cell: unknown): number | null => {
+  if (cell == null) return null;
+  if (typeof cell === "number") return cell;
+  if (typeof cell === "string") {
+    const n = Number(cell);
+    return Number.isFinite(n) ? n : null;
+  }
+  const anyCell = cell as any;
+  if (typeof anyCell?.data === "number") return anyCell.data;
+  if (typeof anyCell?.data === "string") {
+    const n = Number(anyCell.data);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+};
+
+const applyFilter = (
+  row: { cells: Record<string, any> },
+  flt: z.infer<typeof filterOpSchema>,
+): boolean => {
+  const raw = row.cells?.[flt.field_id];
+  const str = getCellString(raw).toLowerCase();
+  const targetStr = flt.value != null ? String(flt.value).toLowerCase() : "";
+  switch (flt.op) {
+    case "eq":
+      return str === targetStr;
+    case "neq":
+      return str !== targetStr;
+    case "contains":
+      return str.includes(targetStr);
+    case "not_contains":
+      return !str.includes(targetStr);
+    case "empty":
+      return str.length === 0;
+    case "not_empty":
+      return str.length > 0;
+    case "gt":
+    case "lt":
+    case "gte":
+    case "lte": {
+      const n = getCellNumber(raw);
+      const t = Number(flt.value);
+      if (n == null || !Number.isFinite(t)) return false;
+      if (flt.op === "gt") return n > t;
+      if (flt.op === "lt") return n < t;
+      if (flt.op === "gte") return n >= t;
+      return n <= t;
+    }
+  }
+};
+
+server.tool(
+  "query_database_rows",
+  "Query database rows with client-side filter/sort/paging. IMPORTANT: AppFlowy-Cloud's REST API does NOT support server-side filter/sort — this tool fetches row details via /row/detail and applies filters in memory. For large databases consider tighter `limit`. Filter ops: eq, neq, contains, not_contains, empty, not_empty, gt, lt, gte, lte. Sort direction: asc | desc.",
+  {
+    workspace_id: z.string(),
+    database_id: z.string(),
+    filter: z.array(filterOpSchema).optional(),
+    sort: z.array(sortSpecSchema).optional(),
+    limit: z.number().int().positive().max(500).optional(),
+    offset: z.number().int().min(0).optional(),
+    with_doc: z.boolean().optional().describe("Fetch row document markdown (default false)"),
+  },
+  async ({ workspace_id, database_id, filter, sort, limit, offset, with_doc }) => {
+    // 1. Get all row ids
+    const idsRes: any = await client.request(
+      "GET",
+      `/api/workspace/${workspace_id}/database/${database_id}/row`,
+    );
+    const idsArr = (idsRes?.data ?? idsRes) as Array<{ id: string }>;
+    if (!Array.isArray(idsArr) || idsArr.length === 0) {
+      return text({ total: 0, returned: 0, rows: [] });
+    }
+    // 2. Fetch details in batches of 50 (URL length safety)
+    const allRows: Array<{ id: string; cells: Record<string, any>; has_doc: boolean; doc?: string }> = [];
+    const batchSize = 50;
+    for (let i = 0; i < idsArr.length; i += batchSize) {
+      const batch = idsArr.slice(i, i + batchSize).map((r) => r.id).join(",");
+      const detailRes: any = await client.request(
+        "GET",
+        `/api/workspace/${workspace_id}/database/${database_id}/row/detail`,
+        { query: { ids: batch, with_doc: with_doc ? "true" : "false" } },
+      );
+      const rows = (detailRes?.data ?? detailRes) as any[];
+      if (Array.isArray(rows)) allRows.push(...rows);
+    }
+    // 3. Filter
+    let filtered = allRows;
+    if (filter && filter.length > 0) {
+      filtered = filtered.filter((r) => filter.every((f) => applyFilter(r, f)));
+    }
+    // 4. Sort
+    if (sort && sort.length > 0) {
+      filtered = [...filtered].sort((a, b) => {
+        for (const s of sort) {
+          const av = getCellString(a.cells?.[s.field_id]);
+          const bv = getCellString(b.cells?.[s.field_id]);
+          const an = Number(av);
+          const bn = Number(bv);
+          let cmp = 0;
+          if (Number.isFinite(an) && Number.isFinite(bn)) cmp = an - bn;
+          else cmp = av.localeCompare(bv);
+          if (cmp !== 0) return s.direction === "desc" ? -cmp : cmp;
+        }
+        return 0;
+      });
+    }
+    // 5. Page
+    const total = filtered.length;
+    const start = offset ?? 0;
+    const end = limit != null ? start + limit : filtered.length;
+    const paged = filtered.slice(start, end);
+    return text({
+      total,
+      returned: paged.length,
+      offset: start,
+      rows: paged,
+      note: "Filter/sort applied client-side — AppFlowy-Cloud REST has no server-side query support.",
+    });
+  },
+);
+
 server.tool(
   "get_database_fields",
   "List database columns (id, name, type). Use the field `id`s as keys for `cells` in insert_database_row / upsert_database_row.",
