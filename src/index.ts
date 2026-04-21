@@ -571,7 +571,6 @@ server.tool(
   },
 );
 
-/* PLACEHOLDER
 server.tool(
   "replace_page_content",
   "WIPE the entire page body and replace it with markdown-derived blocks. Supports: headings (#..######), bullet/numbered lists, - [ ] todos, > quotes, --- dividers, paragraphs. Does NOT parse inline bold/italic/links.",
@@ -588,7 +587,5 @@ server.tool(
     return text({ ok: true, blocks_written: specs.length });
   },
 );
-
-*/
 
 await server.connect(new StdioServerTransport());
