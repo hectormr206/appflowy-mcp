@@ -650,6 +650,22 @@ server.tool(
 );
 
 server.tool(
+  "get_recent_views",
+  "List recently opened pages in a workspace. GET /workspace/{wid}/recent. Returns views in order of last access. `limit` is applied client-side.",
+  {
+    workspace_id: z.string(),
+    limit: z.number().int().positive().max(200).optional(),
+  },
+  async ({ workspace_id, limit }) => {
+    const res: any = await client.request("GET", `/api/workspace/${workspace_id}/recent`);
+    if (limit && Array.isArray(res?.data?.views)) {
+      return text({ ...res, data: { views: res.data.views.slice(0, limit) } });
+    }
+    return text(res);
+  },
+);
+
+server.tool(
   "list_favorites",
   "List pages favorited in the workspace.",
   { workspace_id: z.string() },
