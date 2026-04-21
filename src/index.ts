@@ -267,6 +267,46 @@ server.tool(
 );
 
 server.tool(
+  "trash_page",
+  "Move a page (and its subtree) to the workspace trash. Reversible via restore_page.",
+  {
+    workspace_id: z.string(),
+    view_id: z.string(),
+  },
+  async ({ workspace_id, view_id }) =>
+    text(
+      await client.request(
+        "POST",
+        `/api/workspace/${workspace_id}/page-view/${view_id}/move-to-trash`,
+      ),
+    ),
+);
+
+server.tool(
+  "restore_page",
+  "Restore a trashed page back to its parent.",
+  {
+    workspace_id: z.string(),
+    view_id: z.string(),
+  },
+  async ({ workspace_id, view_id }) =>
+    text(
+      await client.request(
+        "POST",
+        `/api/workspace/${workspace_id}/page-view/${view_id}/restore-from-trash`,
+      ),
+    ),
+);
+
+server.tool(
+  "list_trash",
+  "List pages currently in the workspace trash.",
+  { workspace_id: z.string() },
+  async ({ workspace_id }) =>
+    text(await client.request("GET", `/api/workspace/${workspace_id}/trash`)),
+);
+
+server.tool(
   "move_page",
   "Move a page to a different parent or reorder within its parent.",
   {
