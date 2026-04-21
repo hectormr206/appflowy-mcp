@@ -279,6 +279,48 @@ server.tool(
 );
 
 server.tool(
+  "list_database_views",
+  "List the views (Grid/Board/Calendar) of a specific database. Note: AppFlowy-Cloud has no dedicated endpoint — this filters `/workspace/{wid}/database` output by database_id and returns its `views` field.",
+  {
+    workspace_id: z.string(),
+    database_id: z.string(),
+  },
+  async ({ workspace_id, database_id }) => {
+    const res: any = await client.request(
+      "GET",
+      `/api/workspace/${workspace_id}/database`,
+    );
+    const arr = (res?.data ?? res) as Array<{ id: string; views: any[] }>;
+    const db = Array.isArray(arr) ? arr.find((d) => d.id === database_id) : undefined;
+    if (!db) {
+      return text({ database_id, views: [], note: "Database not found in workspace." });
+    }
+    return text({ database_id, views: db.views ?? [] });
+  },
+);
+
+server.tool(
+  "create_database_view",
+  "Create a new view (Grid/Board/Calendar) on an existing database page. Hits POST /page-view/{view_id}/database-view. `view_id` is the DATABASE page view id (not the workspace). Layout: 1=Grid, 2=Board, 3=Calendar.",
+  {
+    workspace_id: z.string(),
+    view_id: z.string().describe("Database page view UUID"),
+    name: z.string().optional(),
+    layout: z.enum(["grid", "board", "calendar"]).describe("Sub-view layout type"),
+  },
+  async ({ workspace_id, view_id, name, layout }) => {
+    const layoutCode = { grid: 1, board: 2, calendar: 3 }[layout];
+    return text(
+      await client.request(
+        "POST",
+        `/api/workspace/${workspace_id}/page-view/${view_id}/database-view`,
+        { body: { layout: layoutCode, name } },
+      ),
+    );
+  },
+);
+
+server.tool(
   "get_database_fields",
   "List database columns (id, name, type). Use the field `id`s as keys for `cells` in insert_database_row / upsert_database_row.",
   {
