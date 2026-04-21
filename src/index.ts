@@ -821,16 +821,23 @@ const blockInSchema = z.object({
 
 server.tool(
   "edit_page_block",
-  "Replace the text of a specific block in a document page. Find block_id via fetch_page markdown or raw encoded_collab. Rewrites the block's Yjs Y.Text wholesale — does NOT preserve inline formatting.",
+  "Replace the text of a block in a document page. `text` is parsed as inline markdown: **bold**, *italic*/_italic_, `code`, ~~strike~~, [label](url). Pass `raw_delta` to supply Delta ops directly (power users). If `text` contains no markdown syntax it's written verbatim — identical behavior to v0.4.",
   {
     workspace_id: z.string(),
     view_id: z.string(),
     block_id: z.string().describe("Target block id"),
-    text: z.string().describe("New plain text (no rich formatting applied)"),
+    text: z.string().optional().describe("Inline-markdown text (bold/italic/code/strike/link)"),
+    raw_delta: z
+      .array(z.object({ insert: z.string(), attributes: z.record(z.any()).optional() }))
+      .optional()
+      .describe("Direct Yjs Delta ops; overrides `text`"),
   },
-  async ({ workspace_id, view_id, block_id, text: newText }) => {
+  async ({ workspace_id, view_id, block_id, text: newText, raw_delta }) => {
+    if (!raw_delta && newText === undefined) {
+      throw new Error("Provide `text` or `raw_delta`");
+    }
     const loaded = await loadPageDoc(client, workspace_id, view_id);
-    editBlockText(loaded, block_id, newText);
+    editBlockText(loaded, block_id, newText ?? "", raw_delta);
     await pushUpdate(client, workspace_id, view_id, loaded);
     return text({ ok: true, block_id });
   },
@@ -888,7 +895,7 @@ server.tool(
 
 server.tool(
   "replace_page_content",
-  "WIPE the entire page body and replace it with markdown-derived blocks. Supports: headings (#..######), bullet/numbered lists, - [ ] todos, > quotes, --- dividers, paragraphs. Does NOT parse inline bold/italic/links.",
+  "WIPE the entire page body and replace it with markdown-derived blocks. Supports: headings (#..######), bullet/numbered lists, - [ ] todos, > quotes, --- dividers, paragraphs. Inline marks (bold, italic, code, strike, links) are parsed within each block.",
   {
     workspace_id: z.string(),
     view_id: z.string(),

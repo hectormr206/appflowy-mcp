@@ -1,12 +1,34 @@
 import * as Y from "yjs";
 import { AppFlowyClient } from "./client.js";
+import { parseInlineMarkdown, hasInlineMarkdown, type DeltaOp } from "./inline.js";
 
 export interface BlockIn {
   type: string;
   data?: Record<string, any>;
   text?: string;
+  // Pre-built Delta ops. If present, overrides `text`.
+  delta?: DeltaOp[];
   children?: BlockIn[];
 }
+
+const applyDeltaToYText = (yText: Y.Text, ops: DeltaOp[]): void => {
+  yText.delete(0, yText.length);
+  // Y.Text.applyDelta expects ops with {insert, attributes?}
+  const normalized = ops.map((op) =>
+    op.attributes ? { insert: op.insert, attributes: op.attributes } : { insert: op.insert },
+  );
+  if (normalized.length > 0) {
+    yText.applyDelta(normalized);
+  }
+};
+
+const deltaFromSpec = (spec: BlockIn): DeltaOp[] => {
+  if (spec.delta && spec.delta.length > 0) return spec.delta;
+  if (spec.text) {
+    return hasInlineMarkdown(spec.text) ? parseInlineMarkdown(spec.text) : [{ insert: spec.text }];
+  }
+  return [];
+};
 
 interface LoadedDoc {
   doc: Y.Doc;
@@ -80,23 +102,34 @@ const findParent = (
   return null;
 };
 
-export const editBlockText = (loaded: LoadedDoc, blockId: string, newText: string): void => {
+export const editBlockText = (
+  loaded: LoadedDoc,
+  blockId: string,
+  newText: string,
+  rawDelta?: DeltaOp[],
+): void => {
   const block = loaded.blocks.get(blockId) as Y.Map<any> | undefined;
   if (!block) throw new Error(`Block ${blockId} not found`);
   const externalId = block.get("external_id") as string | undefined;
+  const ops: DeltaOp[] = rawDelta && rawDelta.length > 0
+    ? rawDelta
+    : newText
+      ? hasInlineMarkdown(newText)
+        ? parseInlineMarkdown(newText)
+        : [{ insert: newText }]
+      : [];
   loaded.doc.transact(() => {
     if (externalId) {
       const yText = loaded.textMap.get(externalId) as Y.Text | undefined;
       if (yText) {
-        yText.delete(0, yText.length);
-        if (newText) yText.insert(0, newText);
+        applyDeltaToYText(yText, ops);
         return;
       }
     }
     // Fallback: no text_map entry — create one.
     const extId = randId();
     const yText = new Y.Text();
-    if (newText) yText.insert(0, newText);
+    applyDeltaToYText(yText, ops);
     loaded.textMap.set(extId, yText);
     block.set("external_id", extId);
   });
@@ -131,7 +164,8 @@ const makeBlock = (loaded: LoadedDoc, parentId: string, spec: BlockIn): string =
   loaded.blocks.set(id, block);
   loaded.childrenMap.set(childrenKey, new Y.Array<string>());
   const yText = new Y.Text();
-  if (spec.text) yText.insert(0, spec.text);
+  const ops = deltaFromSpec(spec);
+  if (ops.length > 0) yText.applyDelta(ops);
   loaded.textMap.set(extId, yText);
   return id;
 };
