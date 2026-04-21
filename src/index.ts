@@ -369,6 +369,38 @@ server.tool(
 );
 
 server.tool(
+  "list_members",
+  "List members of a workspace (uid, email, role, avatar).",
+  { workspace_id: z.string() },
+  async ({ workspace_id }) =>
+    text(await client.request("GET", `/api/workspace/${workspace_id}/member`)),
+);
+
+server.tool(
+  "invite_member",
+  "Invite an email to join a workspace. Role: Owner | Member | Guest (default Member). Sends an invite email via the server's mailer.",
+  {
+    workspace_id: z.string(),
+    email: z.string().email(),
+    role: z.enum(["Owner", "Member", "Guest"]).optional(),
+    skip_email_send: z.boolean().optional(),
+  },
+  async ({ workspace_id, email, role, skip_email_send }) =>
+    text(
+      await client.request("POST", `/api/workspace/${workspace_id}/invite`, {
+        body: [
+          {
+            email,
+            role: role ?? "Member",
+            skip_email_send: skip_email_send ?? false,
+            wait_email_send: false,
+          },
+        ],
+      }),
+    ),
+);
+
+server.tool(
   "move_page",
   "Move a page to a different parent or reorder within its parent.",
   {
