@@ -693,6 +693,66 @@ server.tool(
 );
 
 server.tool(
+  "publish_page",
+  "Publish a page to the workspace's public namespace. `publish_name` becomes the URL slug (defaults to the page name, slugified). `comments_enabled` / `duplicate_enabled` default to true upstream. Hits POST /workspace/{wid}/page-view/{vid}/publish.",
+  {
+    workspace_id: z.string(),
+    view_id: z.string(),
+    publish_name: z.string().optional().describe("URL slug; server defaults to a sanitised page name"),
+    visible_database_view_ids: z.array(z.string()).optional().describe("For databases: which sub-views to expose"),
+    comments_enabled: z.boolean().optional(),
+    duplicate_enabled: z.boolean().optional(),
+  },
+  async ({ workspace_id, view_id, publish_name, visible_database_view_ids, comments_enabled, duplicate_enabled }) =>
+    text(
+      await client.request(
+        "POST",
+        `/api/workspace/${workspace_id}/page-view/${view_id}/publish`,
+        {
+          body: {
+            publish_name,
+            visible_database_view_ids,
+            comments_enabled,
+            duplicate_enabled,
+          },
+        },
+      ),
+    ),
+);
+
+server.tool(
+  "unpublish_page",
+  "Unpublish a page (removes it from the public namespace). POST /workspace/{wid}/page-view/{vid}/unpublish.",
+  {
+    workspace_id: z.string(),
+    view_id: z.string(),
+  },
+  async ({ workspace_id, view_id }) =>
+    text(
+      await client.request(
+        "POST",
+        `/api/workspace/${workspace_id}/page-view/${view_id}/unpublish`,
+      ),
+    ),
+);
+
+server.tool(
+  "list_published_pages",
+  "List all published pages in a workspace with their view info and publish metadata (slug, publisher, timestamp). GET /workspace/{wid}/published-info.",
+  { workspace_id: z.string() },
+  async ({ workspace_id }) =>
+    text(await client.request("GET", `/api/workspace/${workspace_id}/published-info`)),
+);
+
+server.tool(
+  "get_published_page_info",
+  "Get publish info for a single page (publish namespace, name/slug, comments+duplicate enabled, publisher). GET /workspace/v1/published-info/{view_id}. Construct the public URL as `${BASE}/{publish_namespace}/{publish_name}` once you also know the namespace (see list_published_pages or the workspace publish-namespace endpoint).",
+  { view_id: z.string() },
+  async ({ view_id }) =>
+    text(await client.request("GET", `/api/workspace/v1/published-info/${view_id}`)),
+);
+
+server.tool(
   "list_members",
   "List members of a workspace (uid, email, role, avatar).",
   { workspace_id: z.string() },
