@@ -2,7 +2,7 @@
 
 Model Context Protocol server for AppFlowy Cloud. Lets Claude Code, OpenCode CLI, and any other MCP client read and write pages in your self-hosted AppFlowy.
 
-## Tools (v0.4 — 34 tools)
+## Tools (v0.5 — 37 tools)
 
 ### Identity & navigation
 
@@ -49,8 +49,16 @@ Model Context Protocol server for AppFlowy Cloud. Lets Claude Code, OpenCode CLI
 | `list_databases` | All databases in a workspace |
 | `get_database_rows` | Rows + cells of a database |
 | `get_database_fields` | Columns of a database (id, name, type) |
-| `insert_database_row` | Insert a row with `cells` keyed by field id |
+| `insert_database_row` | Insert a row with `cells` keyed by field id (raw wire-format values) |
 | `upsert_database_row` | Update (or insert) a row by `pre_hash` — see notes |
+| `insert_database_row_typed` | v0.5 — friendly row insert with per-type value encoding |
+| `upsert_database_row_typed` | v0.5 — friendly upsert with per-type value encoding |
+
+### Assets (v0.5)
+
+| Tool | What it does |
+|------|--------------|
+| `upload_asset` | Upload a local file to workspace blob storage; returns `{file_id, url}` |
 
 ### Members
 
@@ -97,8 +105,43 @@ Comments are not exposed via the REST API. Not supported.
 ### Database row limitations
 
 - AppFlowy-Cloud exposes no `DELETE` endpoint for database rows — deletion must be done in the AppFlowy UI.
-- `upsert_database_row` takes a `pre_hash` string (not the raw row id). The server hashes `workspace_id + database_id + pre_hash` with SHA-256 to derive the actual row id. To update an existing row you must reuse the same `pre_hash` that created it — there is no server-side lookup from row id back to pre_hash.
-- `cells` is a map keyed by `field_id` (from `get_database_fields`). Simple field types (text / number / checkbox) accept plain JSON values; rich types (date, select, relation) may require AppFlowy's internal cell encoding which is not fully documented in the REST layer.
+- `upsert_database_row` / `upsert_database_row_typed` take a `pre_hash` string (not the raw row id). The server hashes `workspace_id + database_id + pre_hash` with SHA-256 to derive the actual row id. To update an existing row you must reuse the same `pre_hash` that created it — there is no server-side lookup from row id back to pre_hash.
+- Raw `cells` (on `insert_database_row` / `upsert_database_row`) is a map keyed by `field_id`. Simple field types (text / number / checkbox) accept plain JSON values; rich types need AppFlowy's internal cell encoding — prefer the `_typed` variants below.
+
+### Database rich cells (v0.5)
+
+`insert_database_row_typed` and `upsert_database_row_typed` take `fields: [{field_id, field_type?, value}]`. The tool fetches `get_database_fields` internally, validates `field_type` per id (if you pass it), encodes each value for the on-wire format, and submits. `field_type` can be a numeric code or the name string (`"SingleSelect"`, `"DateTime"`, etc.).
+
+Friendly input per field type (derived from `AppFlowy-Collab` `collab-database` `TypeOptionCellWriter::convert_json_to_cell`):
+
+| Field type | Accepted `value` shapes | Example |
+|------------|-------------------------|---------|
+| `RichText` | string (anything else is stringified) | `"hello"` |
+| `Number` | number or numeric string | `42` or `"3.14"` |
+| `URL` | string | `"https://appflowy.io"` |
+| `Checkbox` | bool, `"Yes"`/`"No"`, `"true"`/`"false"`, number | `true` |
+| `DateTime` | unix-seconds number, OR `{timestamp, end_timestamp?, include_time?, is_range?, reminder_id?}` | `{timestamp: 1776786272, include_time: true}` |
+| `SingleSelect` | array of option names OR ids OR `{id}` / `{name}` (first element wins) | `["Doing"]` |
+| `MultiSelect` | array of option names OR ids OR `{id}` / `{name}` | `["urgent","work"]` |
+| `Checklist` | array of strings (all selected) OR `{options: [name\|{name}], selected?: [name\|id]}` | `["buy milk","pay rent"]` |
+| `Relation` | array of row_ids OR `{row_ids: [...]}` | `["<row-uuid-1>", "<row-uuid-2>"]` |
+
+**Partial support / caveats:**
+
+- `Time`, `Media`, `Summary`, `Translate`, `LastEditedTime`, `CreatedTime` — **no friendly encoder**. Writes for these are not supported by `_typed`; `CreatedTime`/`LastEditedTime` are server-managed anyway.
+- `SingleSelect` / `MultiSelect` / `Checklist`: the wire format (`SelectOptionIds` / `ChecklistCellData`) is accepted by the server's `convert_json_to_cell`, and options you provide by name are resolved to ids using the current field's `type_option.content.options` list. **Known behavior**: when the database's select options were added via the REST `POST /fields` endpoint with `type_option_data`, AppFlowy-Cloud's `row/detail` renderer may return the select cell as `""` / `[]` even though the cell was accepted by the server. This appears to be a mismatch between the field's persisted TypeOption and the read-back resolver — verify writes in the AppFlowy desktop client, or on databases whose options were created via the UI.
+- `Relation` and `Checklist` were wired per the upstream structs (`RelationCellData {row_ids}`, `ChecklistCellData {options, selected_option_ids}`) but were not exercised against a live database with a Relation field — report back if you hit unexpected behavior.
+- If the field type on the server does not match the `field_type` you pass, the tool rejects the request client-side before calling the API.
+
+### Asset upload (v0.5)
+
+`upload_asset(workspace_id, file_path, parent_dir?, mime_type?)` reads the local file, PUTs it to `/api/file_storage/{workspace_id}/v1/blob/{parent_dir}` with the appropriate `Content-Type` + `Content-Length`, and returns `{file_id, parent_dir, name, url}`. The server computes the `file_id` as a hash of the content, so re-uploading the same bytes is idempotent.
+
+- Default `parent_dir` is the workspace_id. You can pass a logical sub-bucket name; this becomes part of the object key.
+- `mime_type` is auto-guessed from the file extension for common types (png/jpg/jpeg/gif/webp/svg/pdf/txt/md/json); otherwise you must pass it explicitly.
+- The returned `url` is the relative GET path. To fetch the asset you authenticate with the same bearer token.
+- **Not wired into existing tools**: `update_page_icon` takes emojis / icon identifiers / external URLs, not file_ids — AppFlowy does not currently accept an uploaded blob as a page icon via the REST API. For now, upload the asset, then reference it from block content (e.g. an `image` block) or a URL cell.
+- Caps: single-request PUT loads the whole file into memory on both client and server. For very large files (≫100 MB) the server exposes `create_upload` / `upload_part` / `complete_upload` endpoints; those are NOT wrapped yet.
 
 ### Member / invite notes
 
