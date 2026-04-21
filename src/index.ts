@@ -14,6 +14,8 @@ import {
   markdownToBlocks,
 } from "./docEdit.js";
 import { encodeCellsTyped, type FieldDescriptor } from "./cells.js";
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
 
 const client = new AppFlowyClient(configFromEnv());
 
@@ -245,6 +247,65 @@ server.tool(
     );
   },
 );
+
+server.tool(
+  "upload_asset",
+  "Upload a file (image, PDF, etc.) to workspace blob storage. Reads the file from disk and PUTs it to /api/file_storage/{ws}/v1/blob/{parent_dir}. Returns {file_id, url}. The server computes the file_id from the content hash.",
+  {
+    workspace_id: z.string(),
+    file_path: z.string().describe("Absolute path to the local file"),
+    parent_dir: z.string().optional().describe("Logical parent dir / bucket (default: workspace_id)"),
+    mime_type: z.string().optional().describe("Content-Type override; auto-guessed from extension if omitted"),
+  },
+  async ({ workspace_id, file_path, parent_dir, mime_type }) => {
+    const buf = await readFile(file_path);
+    const ct = mime_type ?? guessMime(file_path);
+    const dir = parent_dir ?? workspace_id;
+    const url = new URL(
+      `${client.baseUrl}/api/file_storage/${workspace_id}/v1/blob/${encodeURIComponent(dir)}`,
+    );
+    const token = await client.ensureToken();
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": ct,
+        "Content-Length": String(buf.byteLength),
+        Accept: "application/json",
+      },
+      body: buf,
+    });
+    const body = await res.text();
+    if (!res.ok) throw new Error(`upload_asset PUT → HTTP ${res.status}: ${body.slice(0, 500)}`);
+    const parsed = body ? JSON.parse(body) : {};
+    const file_id = parsed?.data?.file_id ?? parsed?.file_id;
+    const name = basename(file_path);
+    return text({
+      file_id,
+      parent_dir: dir,
+      name,
+      url: `/api/file_storage/${workspace_id}/v1/blob/${encodeURIComponent(dir)}/${file_id}`,
+      raw: parsed,
+    });
+  },
+);
+
+const guessMime = (path: string): string => {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  const map: Record<string, string> = {
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    webp: "image/webp",
+    svg: "image/svg+xml",
+    pdf: "application/pdf",
+    txt: "text/plain",
+    md: "text/markdown",
+    json: "application/json",
+  };
+  return map[ext] ?? "application/octet-stream";
+};
 
 server.tool(
   "create_page",

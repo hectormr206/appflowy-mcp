@@ -16,7 +16,7 @@ interface TokenState {
 }
 
 export class AppFlowyClient {
-  private baseUrl: string;
+  readonly baseUrl: string;
   private gotrueUrl: string;
   private email?: string;
   private password?: string;
@@ -37,7 +37,7 @@ export class AppFlowyClient {
     }
   }
 
-  private async ensureToken(): Promise<string> {
+  async ensureToken(): Promise<string> {
     const now = Date.now();
     if (this.token && this.token.expiresAt - now > 30_000) return this.token.accessToken;
 
