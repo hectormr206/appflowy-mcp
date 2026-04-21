@@ -939,6 +939,14 @@ server.tool(
 );
 
 server.tool(
+  "get_workspace_usage",
+  "Get workspace storage usage stats (total document bytes). GET /workspace/{wid}/usage. REQUIRES Owner role — Members/Guests get 403.",
+  { workspace_id: z.string() },
+  async ({ workspace_id }) =>
+    text(await client.request("GET", `/api/workspace/${workspace_id}/usage`)),
+);
+
+server.tool(
   "list_members",
   "List members of a workspace (uid, email, role, avatar).",
   { workspace_id: z.string() },
