@@ -14,8 +14,9 @@ import {
   markdownToBlocks,
 } from "./docEdit.js";
 import { encodeCellsTyped, type FieldDescriptor } from "./cells.js";
-import { readFile } from "node:fs/promises";
-import { basename } from "node:path";
+import { readFile, stat, open } from "node:fs/promises";
+import { basename, extname } from "node:path";
+import { createHash } from "node:crypto";
 
 const client = new AppFlowyClient(configFromEnv());
 
@@ -496,6 +497,141 @@ const guessMime = (path: string): string => {
   };
   return map[ext] ?? "application/octet-stream";
 };
+
+server.tool(
+  "upload_asset_large",
+  "Chunked multi-part upload for large files (recommended for >5MB). Uses AppFlowy-Cloud's create_upload + upload_part + complete_upload endpoints. Returns the same shape as upload_asset. `part_size_mb` defaults to 5 (S3 minimum). Small files (<=part_size) go through single-PUT automatically.",
+  {
+    workspace_id: z.string(),
+    file_path: z.string().describe("Absolute path to the local file"),
+    parent_dir: z.string().optional().describe("Logical parent dir / bucket (default: workspace_id)"),
+    mime_type: z.string().optional().describe("Content-Type override"),
+    part_size_mb: z.number().int().min(5).max(100).optional().describe("Chunk size in MB (default 5)"),
+  },
+  async ({ workspace_id, file_path, parent_dir, mime_type, part_size_mb }) => {
+    const partSize = (part_size_mb ?? 5) * 1024 * 1024;
+    const st = await stat(file_path);
+    const ct = mime_type ?? guessMime(file_path);
+    const dir = parent_dir ?? workspace_id;
+    const name = basename(file_path);
+
+    // Small file → reuse single-PUT path (matches upload_asset)
+    if (st.size <= partSize) {
+      const buf = await readFile(file_path);
+      const url = new URL(
+        `${client.baseUrl}/api/file_storage/${workspace_id}/v1/blob/${encodeURIComponent(dir)}`,
+      );
+      const token = await client.ensureToken();
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": ct,
+          "Content-Length": String(buf.byteLength),
+          Accept: "application/json",
+        },
+        body: buf,
+      });
+      const body = await res.text();
+      if (!res.ok) throw new Error(`upload_asset_large PUT → HTTP ${res.status}: ${body.slice(0, 500)}`);
+      const parsed = body ? JSON.parse(body) : {};
+      const file_id = parsed?.data?.file_id ?? parsed?.file_id;
+      return text({
+        file_id,
+        parent_dir: dir,
+        name,
+        size: st.size,
+        mode: "single",
+        url: `/api/file_storage/${workspace_id}/v1/blob/${encodeURIComponent(dir)}/${file_id}`,
+        raw: parsed,
+      });
+    }
+
+    // 1. Compute content hash (streaming) to use as file_id
+    const ext = extname(file_path).replace(/^\./, "");
+    const hasher = createHash("sha256");
+    const fh1 = await open(file_path, "r");
+    try {
+      const chunk = Buffer.alloc(64 * 1024);
+      let pos = 0;
+      while (pos < st.size) {
+        const { bytesRead } = await fh1.read(chunk, 0, chunk.length, pos);
+        if (bytesRead === 0) break;
+        hasher.update(chunk.subarray(0, bytesRead));
+        pos += bytesRead;
+      }
+    } finally {
+      await fh1.close();
+    }
+    const hash = hasher.digest("hex");
+    const file_id = ext ? `${hash}.${ext}` : hash;
+
+    // 2. create_upload
+    const createRes: any = await client.request(
+      "POST",
+      `/api/file_storage/${workspace_id}/create_upload`,
+      { body: { file_id, parent_dir: dir, content_type: ct, file_size: st.size } },
+    );
+    const upload_id = createRes?.data?.upload_id ?? createRes?.upload_id;
+    if (!upload_id) throw new Error(`create_upload did not return an upload_id: ${JSON.stringify(createRes)}`);
+
+    // 3. upload_part loop
+    const parts: Array<{ e_tag: string; part_number: number }> = [];
+    const token = await client.ensureToken();
+    const encodedDir = encodeURIComponent(dir);
+    const encodedFid = encodeURIComponent(file_id);
+    const fh2 = await open(file_path, "r");
+    try {
+      let partNum = 1;
+      let offset = 0;
+      while (offset < st.size) {
+        const remaining = st.size - offset;
+        const chunkSize = Math.min(partSize, remaining);
+        const buf = Buffer.alloc(chunkSize);
+        const { bytesRead } = await fh2.read(buf, 0, chunkSize, offset);
+        if (bytesRead === 0) break;
+        const url = `${client.baseUrl}/api/file_storage/${workspace_id}/upload_part/${encodedDir}/${encodedFid}/${upload_id}/${partNum}`;
+        const res = await fetch(url, {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/octet-stream",
+            "Content-Length": String(bytesRead),
+            Accept: "application/json",
+          },
+          body: buf.subarray(0, bytesRead),
+        });
+        const body = await res.text();
+        if (!res.ok) throw new Error(`upload_part ${partNum} → HTTP ${res.status}: ${body.slice(0, 500)}`);
+        const parsed = body ? JSON.parse(body) : {};
+        const e_tag = parsed?.data?.e_tag ?? parsed?.e_tag;
+        if (!e_tag) throw new Error(`upload_part ${partNum}: missing e_tag in response`);
+        parts.push({ e_tag, part_number: partNum });
+        offset += bytesRead;
+        partNum++;
+      }
+    } finally {
+      await fh2.close();
+    }
+
+    // 4. complete_upload
+    await client.request(
+      "PUT",
+      `/api/file_storage/${workspace_id}/complete_upload`,
+      { body: { file_id, parent_dir: dir, upload_id, parts } },
+    );
+
+    return text({
+      file_id,
+      parent_dir: dir,
+      name,
+      size: st.size,
+      mode: "multipart",
+      parts: parts.length,
+      url: `/api/file_storage/${workspace_id}/v1/blob/${encodedDir}/${encodedFid}`,
+    });
+  },
+);
 
 server.tool(
   "create_page",
