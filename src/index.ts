@@ -554,7 +554,6 @@ server.tool(
   },
 );
 
-/* PLACEHOLDER
 server.tool(
   "insert_page_block_after",
   "Insert a new block immediately AFTER an existing block (ref_block_id) in its parent.",
@@ -572,6 +571,7 @@ server.tool(
   },
 );
 
+/* PLACEHOLDER
 server.tool(
   "replace_page_content",
   "WIPE the entire page body and replace it with markdown-derived blocks. Supports: headings (#..######), bullet/numbered lists, - [ ] todos, > quotes, --- dividers, paragraphs. Does NOT parse inline bold/italic/links.",
