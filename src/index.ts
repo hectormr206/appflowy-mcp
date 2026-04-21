@@ -22,7 +22,7 @@ const client = new AppFlowyClient(configFromEnv());
 
 const server = new McpServer({
   name: "appflowy-mcp",
-  version: "0.5.0",
+  version: "0.6.0",
 });
 
 const text = (value: unknown) => ({

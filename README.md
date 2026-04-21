@@ -2,7 +2,22 @@
 
 Model Context Protocol server for AppFlowy Cloud. Lets Claude Code, OpenCode CLI, and any other MCP client read and write pages in your self-hosted AppFlowy.
 
-## Tools (v0.5 — 37 tools)
+## Design principles
+
+This MCP is a **thin adapter** over AppFlowy-Cloud's real REST capabilities. It does NOT:
+
+- Invent features that the server does not expose.
+- Create shadow state (side databases, hidden tables, caches of mutable state).
+- Simulate endpoints that do not exist server-side.
+
+If AppFlowy-Cloud does not expose something, this README documents the gap in [Known limits](#known-limits-awaiting-appflowy-upstream) as "not supported (awaiting upstream)" rather than shipping a fake tool. We'd rather ship 6 real tools than 10 with 4 broken. Every tool here is backed by a verified route in `src/api/*.rs` of AppFlowy-Cloud.
+
+Two kinds of client-side work are allowed and clearly labeled:
+
+1. **Client-side query over server data** — e.g. `query_database_rows` fetches row details via `/row/detail` and filters/sorts in memory because AppFlowy-Cloud's REST API has no server-side filter/sort. The tool description says so.
+2. **Yjs CRDT edits** — document editing pulls the Yjs blob, mutates it locally, and posts an incremental update back to `/collab/{id}/web-update`. This is the same path AppFlowy Web uses; no shadow state.
+
+## Tools (v0.6 — 50 tools)
 
 ### Identity & navigation
 
@@ -29,36 +44,64 @@ Model Context Protocol server for AppFlowy Cloud. Lets Claude Code, OpenCode CLI
 | `list_trash` | List pages in the trash |
 | `favorite_page` | Mark/unmark a page as favorite (optional `is_pinned`) |
 | `list_favorites` | List favorited pages |
+| `get_recent_views` | v0.6 — List recently opened pages (GET `/workspace/{wid}/recent`) |
 | `update_page_icon` | Set a page icon (`ty`: 0=Emoji, 1=Url, 2=Icon) |
 | `remove_page_icon` | Remove a page's icon |
 
-### Document editing (v0.4, in-place Yjs edits)
+### Publishing (v0.6)
 
 | Tool | What it does |
 |------|--------------|
-| `edit_page_block` | Replace the plain text of a block by `block_id` |
+| `publish_page` | Publish a page to the workspace's public namespace |
+| `unpublish_page` | Unpublish a page |
+| `list_published_pages` | All published pages in a workspace with publish metadata |
+| `get_published_page_info` | Publish info for a single view (slug, namespace, flags) |
+
+### Document editing (v0.4–0.6, in-place Yjs edits)
+
+| Tool | What it does |
+|------|--------------|
+| `edit_page_block` | v0.6 — Replace a block's text; `text` is parsed as inline markdown (bold/italic/code/strike/links). `raw_delta` escape hatch for direct Yjs Delta ops |
 | `delete_page_block` | Remove a block (and its subtree) by `block_id` |
 | `insert_page_block_before` | Insert a new block before a reference block |
 | `insert_page_block_after` | Insert a new block after a reference block |
-| `replace_page_content` | Wipe the page body and rewrite it from markdown |
+| `replace_page_content` | v0.6 — Wipe the page body and rewrite it from markdown (now parses inline marks within each block) |
 
 ### Databases
 
 | Tool | What it does |
 |------|--------------|
 | `list_databases` | All databases in a workspace |
-| `get_database_rows` | Rows + cells of a database |
+| `get_database_rows` | Row ids of a database (no cell data) |
+| `query_database_rows` | v0.6 — Fetch rows with **client-side** filter / sort / paging (AppFlowy-Cloud has no server-side query — see Known limits) |
+| `list_database_views` | v0.6 — Views (Grid/Board/Calendar) belonging to a database |
+| `create_database_view` | v0.6 — Create a new view on a database page |
 | `get_database_fields` | Columns of a database (id, name, type) |
 | `insert_database_row` | Insert a row with `cells` keyed by field id (raw wire-format values) |
 | `upsert_database_row` | Update (or insert) a row by `pre_hash` — see notes |
 | `insert_database_row_typed` | v0.5 — friendly row insert with per-type value encoding |
 | `upsert_database_row_typed` | v0.5 — friendly upsert with per-type value encoding |
 
-### Assets (v0.5)
+### Assets
 
 | Tool | What it does |
 |------|--------------|
-| `upload_asset` | Upload a local file to workspace blob storage; returns `{file_id, url}` |
+| `upload_asset` | v0.5 — Single-PUT upload to workspace blob storage; returns `{file_id, url}` |
+| `upload_asset_large` | v0.6 — Multi-part upload for large files (chunked). Falls back to single-PUT for files under `part_size_mb` |
+
+### Templates (v0.6, read-only)
+
+| Tool | What it does |
+|------|--------------|
+| `list_templates` | List templates from the AppFlowy template center (public) |
+| `get_template` | Get a single template (with publish info) |
+| `list_template_categories` | List template categories |
+
+### Workspace (v0.6)
+
+| Tool | What it does |
+|------|--------------|
+| `get_workspace_usage` | Total document bytes used by the workspace (Owner role required) |
 
 ### Members
 
@@ -89,14 +132,13 @@ This is race-safe per-request (each call reads fresh state) but does NOT subscri
 
 Block ids are visible in `fetch_page`'s raw `encoded_collab` payload; find them by decoding the Yjs doc yourself, or ship a small helper call if you need them routinely (not currently exposed as a tool).
 
-**Known limits of v0.4 editing:**
+**Editing limits:**
 
-- `edit_page_block` rewrites the block's `Y.Text` wholesale. Inline formatting (bold / italic / links / mentions) on the original text is **discarded** — the new text is plain.
-- `replace_page_content`'s markdown parser handles headings, paragraphs, bullet/numbered/todo lists, `>` quotes and `---` dividers only. It does NOT parse inline `**bold**`, `*italic*`, links, code spans, or code fences — those arrive as literal characters in the paragraph text. Tables, images, and nested children are not emitted.
-- `delete_page_block` on a block with children removes the whole subtree. Text nodes under `text_map` and children arrays under `children_map` are garbage-collected for the deleted root only (descendants' entries are orphaned — harmless but leaks a little Yjs state over time).
-- No support for inserting rich-formatted inline text (Delta ops with attributes) via these tools.
-
-Comments are not exposed via the REST API. Not supported.
+- v0.6 FIXED: `edit_page_block` now parses `**bold**`, `*italic*`/`_italic_`, `` `code` ``, `~~strike~~`, and `[text](url)` into Yjs Delta ops with proper attributes. The previous "discards formatting" behavior only applied to v0.4/v0.5. A `raw_delta` escape hatch is available for power users.
+- v0.6 FIXED: `replace_page_content` parses the same inline marks per block.
+- Still plain: block structure (headings / lists / todos / quotes / dividers) is emitted; tables and nested children from markdown are NOT.
+- `delete_page_block` on a block with children removes the whole subtree. Yjs `text_map` / `children_map` entries for descendants may orphan (harmless).
+- Mentions (`@`/page-links) are emitted when reading via `fetch_page_markdown` but the inline parser does NOT generate them on write.
 
 ### Markdown rendering
 
@@ -141,7 +183,7 @@ Friendly input per field type (derived from `AppFlowy-Collab` `collab-database` 
 - `mime_type` is auto-guessed from the file extension for common types (png/jpg/jpeg/gif/webp/svg/pdf/txt/md/json); otherwise you must pass it explicitly.
 - The returned `url` is the relative GET path. To fetch the asset you authenticate with the same bearer token.
 - **Not wired into existing tools**: `update_page_icon` takes emojis / icon identifiers / external URLs, not file_ids — AppFlowy does not currently accept an uploaded blob as a page icon via the REST API. For now, upload the asset, then reference it from block content (e.g. an `image` block) or a URL cell.
-- Caps: single-request PUT loads the whole file into memory on both client and server. For very large files (≫100 MB) the server exposes `create_upload` / `upload_part` / `complete_upload` endpoints; those are NOT wrapped yet.
+- For large files (>5MB or anything risking memory pressure), use `upload_asset_large` — it wraps AppFlowy-Cloud's `create_upload` / `upload_part` / `complete_upload` multipart flow and streams chunks from disk. It automatically falls back to single-PUT for files ≤ `part_size_mb` (default 5). `file_id` is computed client-side as a streaming SHA-256 hex digest of the content (+ file extension).
 
 ### Member / invite notes
 
@@ -161,6 +203,25 @@ Friendly input per field type (derived from `AppFlowy-Collab` `collab-database` 
 
 - `trash_page` is reversible via `restore_page`. Hard deletion is only available in the AppFlowy UI.
 - `list_trash` returns the full trash view list, including `deleted_at`.
+
+### Known limits (awaiting AppFlowy upstream)
+
+These are **upstream gaps in AppFlowy-Cloud**, not MCP design choices. Each was verified by grepping `AppFlowy-Cloud/src/api/*.rs` and the `libs/shared-entity` DTOs for the backing route; where no route exists the MCP ships no tool rather than a fake.
+
+| Feature | Status | Detail |
+|---------|--------|--------|
+| Database row **DELETE** | Not supported | No DELETE route on `/workspace/{wid}/database/{did}/row`. Deletion only via desktop UI. |
+| **Server-side** database filter/sort | Not supported | `query_database_rows` filters in memory after fetching via `/row/detail`. No query params (`filter`, `sort`, `where`) on the REST row endpoints. |
+| **Comments** on live (non-published) pages | Not supported | REST comments exist only for `/published-info/{view_id}/comment` (public pages). No private-page comment API. |
+| **Live cursors / presence** | Not supported | Presence is WebSocket-only; this MCP is stdio-REST only. |
+| **Reminders** | Not supported | No `/reminder` endpoints in AppFlowy-Cloud. Reminders live inside `DateTime` cells (`reminder_id` field) — not a first-class API. |
+| **Page icon from uploaded blob** | Not supported | `update_page_icon` accepts emoji / URL / icon-identifier only; no file_id variant. |
+| **Offline / incremental sync** | Not supported | No pagination cursor, no "since" token on most list endpoints. `list_database_row_updated` takes `after: DateTime` but the others are full-list fetches. |
+| **Templates: create from template** | Not supported | `/api/template-center/template` is read-only (`GET` + admin-gated `POST`/`PUT`/`DELETE`). No "instantiate this template into my workspace" endpoint. |
+| **Database view filter/sort config** | Partial | `create_database_view` creates an empty view; the view's own filter/sort rules live inside the database's Yjs collab doc and are not editable via REST. |
+| **Workspace usage detail** | Partial | `get_workspace_usage` returns `total_document_size` (bytes) only. No per-file, per-user, or storage-quota detail. |
+
+If AppFlowy-Cloud adds any of these, bump a new version and wire them up. Track issues at https://github.com/AppFlowy-IO/AppFlowy-Cloud/issues.
 
 ## Install
 
