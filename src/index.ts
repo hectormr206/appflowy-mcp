@@ -537,7 +537,6 @@ server.tool(
   },
 );
 
-/* PLACEHOLDER
 server.tool(
   "insert_page_block_before",
   "Insert a new block immediately BEFORE an existing block (ref_block_id) in its parent. Block spec: {type, data?, text?}.",
@@ -555,6 +554,7 @@ server.tool(
   },
 );
 
+/* PLACEHOLDER
 server.tool(
   "insert_page_block_after",
   "Insert a new block immediately AFTER an existing block (ref_block_id) in its parent.",
