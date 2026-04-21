@@ -521,7 +521,6 @@ server.tool(
   },
 );
 
-/* PLACEHOLDER
 server.tool(
   "delete_page_block",
   "Remove a block (and its subtree) from a document page by block_id.",
@@ -538,6 +537,7 @@ server.tool(
   },
 );
 
+/* PLACEHOLDER
 server.tool(
   "insert_page_block_before",
   "Insert a new block immediately BEFORE an existing block (ref_block_id) in its parent. Block spec: {type, data?, text?}.",
