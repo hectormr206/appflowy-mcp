@@ -307,6 +307,68 @@ server.tool(
 );
 
 server.tool(
+  "favorite_page",
+  "Mark or unmark a page as favorite. `is_pinned` pins it to the top of the favorites sidebar.",
+  {
+    workspace_id: z.string(),
+    view_id: z.string(),
+    is_favorite: z.boolean(),
+    is_pinned: z.boolean().optional(),
+  },
+  async ({ workspace_id, view_id, is_favorite, is_pinned }) =>
+    text(
+      await client.request(
+        "POST",
+        `/api/workspace/${workspace_id}/page-view/${view_id}/favorite`,
+        { body: { is_favorite, is_pinned: is_pinned ?? false } },
+      ),
+    ),
+);
+
+server.tool(
+  "list_favorites",
+  "List pages favorited in the workspace.",
+  { workspace_id: z.string() },
+  async ({ workspace_id }) =>
+    text(await client.request("GET", `/api/workspace/${workspace_id}/favorite`)),
+);
+
+server.tool(
+  "update_page_icon",
+  "Set a page icon. `ty`: 0=Emoji, 1=Url, 2=Icon. `value` is the emoji char, URL, or icon identifier.",
+  {
+    workspace_id: z.string(),
+    view_id: z.string(),
+    ty: z.number().int().min(0).max(2).describe("0=Emoji, 1=Url, 2=Icon"),
+    value: z.string(),
+  },
+  async ({ workspace_id, view_id, ty, value }) =>
+    text(
+      await client.request(
+        "POST",
+        `/api/workspace/${workspace_id}/page-view/${view_id}/update-icon`,
+        { body: { icon: { ty, value } } },
+      ),
+    ),
+);
+
+server.tool(
+  "remove_page_icon",
+  "Remove a page's icon.",
+  {
+    workspace_id: z.string(),
+    view_id: z.string(),
+  },
+  async ({ workspace_id, view_id }) =>
+    text(
+      await client.request(
+        "POST",
+        `/api/workspace/${workspace_id}/page-view/${view_id}/remove-icon`,
+      ),
+    ),
+);
+
+server.tool(
   "move_page",
   "Move a page to a different parent or reorder within its parent.",
   {
