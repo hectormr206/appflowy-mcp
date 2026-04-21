@@ -13,7 +13,9 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "test": "node --import tsx/esm --test test/inline.test.ts test/docEdit.test.ts test/cells.test.ts test/yjsDoc.test.ts test/client.test.ts",
+    "smoke": "tsx scripts/smoke.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",

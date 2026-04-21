@@ -88,10 +88,7 @@ export class AppFlowyClient {
     opts: { query?: Record<string, string | number | undefined>; body?: unknown } = {},
   ): Promise<T> {
     const token = await this.ensureToken();
-    const url = new URL(`${this.baseUrl}${path}`);
-    for (const [k, v] of Object.entries(opts.query ?? {})) {
-      if (v !== undefined) url.searchParams.set(k, String(v));
-    }
+    const url = buildRequestUrl(this.baseUrl, path, opts.query);
     const res = await fetch(url, {
       method,
       headers: {
@@ -114,7 +111,27 @@ export class AppFlowyClient {
   }
 }
 
-function decodeJwtExp(token: string): number | null {
+/**
+ * Build a request URL by joining baseUrl + path and attaching query params.
+ * Normalizes trailing slashes on baseUrl (already done in constructor but safe
+ * to call standalone with any baseUrl).
+ *
+ * Exported for testability.
+ */
+export function buildRequestUrl(
+  baseUrl: string,
+  path: string,
+  query?: Record<string, string | number | undefined>,
+): URL {
+  const normalized = baseUrl.replace(/\/+$/, "");
+  const url = new URL(`${normalized}${path}`);
+  for (const [k, v] of Object.entries(query ?? {})) {
+    if (v !== undefined) url.searchParams.set(k, String(v));
+  }
+  return url;
+}
+
+export function decodeJwtExp(token: string): number | null {
   try {
     const [, payload] = token.split(".");
     const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
