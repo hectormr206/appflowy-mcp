@@ -401,6 +401,76 @@ server.tool(
 );
 
 server.tool(
+  "ai_complete",
+  "Run an AI completion. completion_type: 1=ImproveWriting, 2=SpellingAndGrammar, 3=MakeShorter, 4=MakeLonger, 5=ContinueWriting, 6=Explain, 7=AskAI, 8=CustomPrompt. Returns the concatenated streamed text.",
+  {
+    workspace_id: z.string(),
+    text: z.string(),
+    completion_type: z.number().int().min(1).max(8).optional(),
+    custom_prompt: z.string().optional().describe("System prompt; only used with completion_type=8"),
+  },
+  async ({ workspace_id, text: input, completion_type, custom_prompt }) => {
+    const body: any = {
+      text: input,
+      completion_type: completion_type ?? 7,
+      format: { output_layout: 0, output_content: 0 },
+    };
+    if (custom_prompt) {
+      body.metadata = { custom_prompt: { system: custom_prompt } };
+    }
+    const res = await client.request<string>(
+      "POST",
+      `/api/ai/${workspace_id}/complete/stream`,
+      { body },
+    );
+    return text(typeof res === "string" ? res : JSON.stringify(res));
+  },
+);
+
+server.tool(
+  "ai_summarize_row",
+  "Summarize a row's cell values via AI. `cells` is a JSON object of column name -> value.",
+  {
+    workspace_id: z.string(),
+    cells: z.record(z.any()).describe("Map column name -> value"),
+  },
+  async ({ workspace_id, cells }) =>
+    text(
+      await client.request("POST", `/api/ai/${workspace_id}/summarize_row`, {
+        body: { workspace_id, data: { Content: cells } },
+      }),
+    ),
+);
+
+server.tool(
+  "ai_translate_row",
+  "Translate a row's cell values via AI. `cells` is an array of {title, content} pairs.",
+  {
+    workspace_id: z.string(),
+    cells: z.array(z.object({ title: z.string(), content: z.string() })),
+    language: z.string().describe("Target language, e.g. 'Spanish'"),
+    include_header: z.boolean().optional(),
+  },
+  async ({ workspace_id, cells, language, include_header }) =>
+    text(
+      await client.request("POST", `/api/ai/${workspace_id}/translate_row`, {
+        body: {
+          workspace_id,
+          data: { cells, language, include_header: include_header ?? true },
+        },
+      }),
+    ),
+);
+
+server.tool(
+  "list_ai_models",
+  "List AI models available for completion / chat in this workspace.",
+  { workspace_id: z.string() },
+  async ({ workspace_id }) =>
+    text(await client.request("GET", `/api/ai/${workspace_id}/model/list`)),
+);
+
+server.tool(
   "move_page",
   "Move a page to a different parent or reorder within its parent.",
   {
