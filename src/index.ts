@@ -13,6 +13,7 @@ import {
   replacePageContent,
   markdownToBlocks,
 } from "./docEdit.js";
+import { encodeCellsTyped, type FieldDescriptor } from "./cells.js";
 
 const client = new AppFlowyClient(configFromEnv());
 
@@ -180,6 +181,69 @@ server.tool(
         { body: { pre_hash, cells: cells ?? {}, document } },
       ),
     ),
+);
+
+const typedFieldSchema = z.object({
+  field_id: z.string(),
+  field_type: z.union([z.number().int(), z.string()]).optional().describe(
+    "Optional sanity-check — rejects if it mismatches the real field type.",
+  ),
+  value: z.any(),
+});
+
+const fetchDatabaseFields = async (workspace_id: string, database_id: string): Promise<FieldDescriptor[]> => {
+  const res: any = await client.request(
+    "GET",
+    `/api/workspace/${workspace_id}/database/${database_id}/fields`,
+  );
+  const arr = res?.data ?? res;
+  if (!Array.isArray(arr)) throw new Error("Unexpected fields response");
+  return arr as FieldDescriptor[];
+};
+
+server.tool(
+  "insert_database_row_typed",
+  "Insert a database row with typed cells (rich types supported: RichText, Number, DateTime, SingleSelect, MultiSelect, Checkbox, URL, Checklist, Relation). Fetches fields first and encodes per type. DateTime value: number (unix seconds) or {timestamp, include_time?, is_range?, end_timestamp?}. Select values: array of option names OR option ids. Relation: array of row_ids. See README for per-type details.",
+  {
+    workspace_id: z.string(),
+    database_id: z.string(),
+    fields: z.array(typedFieldSchema).describe("Array of {field_id, field_type?, value}"),
+    document: z.string().optional(),
+  },
+  async ({ workspace_id, database_id, fields, document }) => {
+    const fieldDescs = await fetchDatabaseFields(workspace_id, database_id);
+    const cells = encodeCellsTyped(fieldDescs, fields);
+    return text(
+      await client.request(
+        "POST",
+        `/api/workspace/${workspace_id}/database/${database_id}/row`,
+        { body: { cells, document } },
+      ),
+    );
+  },
+);
+
+server.tool(
+  "upsert_database_row_typed",
+  "Upsert (insert-or-update) a database row with typed cells. Row id is derived as sha256(workspace_id + database_id + pre_hash). Reuse pre_hash to update. See insert_database_row_typed for value encoding.",
+  {
+    workspace_id: z.string(),
+    database_id: z.string(),
+    pre_hash: z.string(),
+    fields: z.array(typedFieldSchema),
+    document: z.string().optional(),
+  },
+  async ({ workspace_id, database_id, pre_hash, fields, document }) => {
+    const fieldDescs = await fetchDatabaseFields(workspace_id, database_id);
+    const cells = encodeCellsTyped(fieldDescs, fields);
+    return text(
+      await client.request(
+        "PUT",
+        `/api/workspace/${workspace_id}/database/${database_id}/row`,
+        { body: { pre_hash, cells, document } },
+      ),
+    );
+  },
 );
 
 server.tool(
