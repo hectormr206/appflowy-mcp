@@ -125,7 +125,7 @@ Two kinds of client-side work are allowed and clearly labeled:
 1. **Client-side query over server data** — e.g. `query_database_rows` fetches row details via `/row/detail` and filters/sorts in memory because AppFlowy-Cloud's REST API has no server-side filter/sort. The tool description says so.
 2. **Yjs CRDT edits** — document editing pulls the Yjs blob, mutates it locally, and posts an incremental update back to `/collab/{id}/web-update`. This is the same path AppFlowy Web uses; no shadow state.
 
-## Tools (v0.7 — 50 tools)
+## Tools (v0.9 — 52 tools)
 
 ### Identity & navigation
 
@@ -133,6 +133,7 @@ Two kinds of client-side work are allowed and clearly labeled:
 |------|--------------|
 | `get_self` | Authenticated user profile |
 | `list_workspaces` | Workspaces the user can access |
+| `create_workspace` | Create a new workspace (returns the new workspace id) |
 | `search` | Full-text / semantic search in a workspace |
 | `get_folder` | Page tree of a workspace (depth-limited) |
 
@@ -187,6 +188,7 @@ In-place Yjs edits. See [How in-place document editing works](#how-in-place-docu
 | `list_database_views` | Views (Grid/Board/Calendar) belonging to a database |
 | `create_database_view` | Create a new view on a database page |
 | `get_database_fields` | Columns of a database (id, name, type) |
+| `create_database_field` | Add a new field (column) to a database — supports SingleSelect / MultiSelect with inline `options` |
 | `insert_database_row` | Insert a row with `cells` keyed by field id (raw wire-format values) |
 | `upsert_database_row` | Update (or insert) a row by `pre_hash` — see notes |
 | `insert_database_row_typed` | Friendly row insert with per-type value encoding |

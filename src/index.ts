@@ -22,7 +22,7 @@ const client = new AppFlowyClient(configFromEnv());
 
 const server = new McpServer({
   name: "appflowy-mcp",
-  version: "0.7.0",
+  version: "0.9.0",
 });
 
 const text = (value: unknown) => ({
@@ -41,6 +41,27 @@ server.tool(
   "List all workspaces the user has access to, with ids and names.",
   {},
   async () => text(await client.request("GET", "/api/user/workspace")),
+);
+
+server.tool(
+  "create_workspace",
+  "Create a new AppFlowy workspace owned by the authenticated user. Returns the full workspace record (including the new workspace_id). Hits POST /api/workspace.",
+  {
+    workspace_name: z.string().min(1).describe("Display name of the new workspace"),
+    icon: z
+      .string()
+      .optional()
+      .describe("Optional workspace icon (emoji or icon identifier)"),
+  },
+  async ({ workspace_name, icon }) =>
+    text(
+      await client.request("POST", "/api/workspace", {
+        body: {
+          workspace_name,
+          workspace_icon: icon ?? "",
+        },
+      }),
+    ),
 );
 
 server.tool(
@@ -335,6 +356,112 @@ server.tool(
         `/api/workspace/${workspace_id}/database/${database_id}/fields`,
       ),
     ),
+);
+
+// AppFlowy FieldType numeric IDs (from collab_database::entity::FieldType).
+// Matches the ordering in AppFlowy-Collab and is what POST /database/{id}/fields expects.
+const FIELD_TYPE_IDS = {
+  RichText: 0,
+  Number: 1,
+  DateTime: 2,
+  SingleSelect: 3,
+  MultiSelect: 4,
+  Checkbox: 5,
+  URL: 6,
+  Checklist: 7,
+  LastEditedTime: 8,
+  CreatedTime: 9,
+  Relation: 10,
+  Summary: 11,
+  Time: 12,
+  Translate: 13,
+  Media: 14,
+} as const;
+
+const FIELD_TYPE_NAMES = Object.keys(FIELD_TYPE_IDS) as (keyof typeof FIELD_TYPE_IDS)[];
+
+// Default AppFlowy option colors (cycle through when caller omits color).
+const DEFAULT_OPTION_COLORS = [
+  "Purple",
+  "Pink",
+  "LightPink",
+  "Orange",
+  "Yellow",
+  "Lime",
+  "Green",
+  "Aqua",
+  "Blue",
+];
+
+const randomOptionId = () =>
+  Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+
+server.tool(
+  "create_database_field",
+  "Create a new field (column) in an existing database. Hits POST /api/workspace/{wid}/database/{db_id}/fields and returns the new field id. For SingleSelect / MultiSelect, pass `options`: each option gets an auto-generated id/color when omitted. NOTE (per README 'Database rich cells'): when options are created this way, rows written against them sometimes render as empty in `row/detail` until the AppFlowy desktop client hydrates the collab — verify in UI.",
+  {
+    workspace_id: z.string().describe("Workspace UUID"),
+    database_id: z.string().describe("Database UUID (same id used by get_database_fields)"),
+    field_name: z.string().min(1).describe("Column display name"),
+    field_type: z
+      .union([z.enum(FIELD_TYPE_NAMES as [string, ...string[]]), z.number().int().min(0).max(14)])
+      .describe(
+        "Field type. Name (e.g. 'RichText', 'SingleSelect') or numeric id (0..14). See FieldType in AppFlowy-Collab.",
+      ),
+    options: z
+      .array(
+        z.object({
+          name: z.string().min(1),
+          color: z
+            .string()
+            .optional()
+            .describe("AppFlowy select option color (Purple, Pink, Orange, ...). Auto-assigned if omitted."),
+        }),
+      )
+      .optional()
+      .describe("Only for SingleSelect / MultiSelect. Ignored otherwise."),
+    type_option_data: z
+      .record(z.any())
+      .optional()
+      .describe("Escape hatch: raw TypeOptionData JSON. Overrides `options` if provided."),
+  },
+  async ({ workspace_id, database_id, field_name, field_type, options, type_option_data }) => {
+    const ftId =
+      typeof field_type === "number"
+        ? field_type
+        : FIELD_TYPE_IDS[field_type as keyof typeof FIELD_TYPE_IDS];
+    if (typeof ftId !== "number") {
+      throw new Error(`Unknown field_type: ${field_type}`);
+    }
+
+    let tod: Record<string, unknown> | undefined = type_option_data;
+    if (!tod && options && (ftId === FIELD_TYPE_IDS.SingleSelect || ftId === FIELD_TYPE_IDS.MultiSelect)) {
+      tod = {
+        content: JSON.stringify({
+          options: options.map((o, i) => ({
+            id: randomOptionId(),
+            name: o.name,
+            color: o.color ?? DEFAULT_OPTION_COLORS[i % DEFAULT_OPTION_COLORS.length],
+          })),
+          disable_color: false,
+        }),
+      };
+    }
+
+    return text(
+      await client.request(
+        "POST",
+        `/api/workspace/${workspace_id}/database/${database_id}/fields`,
+        {
+          body: {
+            name: field_name,
+            field_type: ftId,
+            type_option_data: tod ?? null,
+          },
+        },
+      ),
+    );
+  },
 );
 
 server.tool(
@@ -678,7 +805,7 @@ server.tool(
     view_id: z.string(),
     text: z.string().optional().describe("Plain text; paragraphs separated by blank lines"),
     blocks: z
-      .array(z.any())
+      .array(z.record(z.string(), z.any()))
       .optional()
       .describe("Raw AppFlowy block objects (type, data, children). Overrides `text` if set."),
   },
